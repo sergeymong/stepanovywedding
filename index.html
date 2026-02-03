@@ -40,7 +40,8 @@
       transition: transform 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
       will-change: transform;
     }
-    .carousel-track.dragging {
+    .carousel-track.dragging,
+    .carousel-track.no-transition {
       transition: none;
     }
     .carousel-slide {
@@ -152,35 +153,91 @@
     (function() {
       const track = document.getElementById('galleryTrack');
       const dots = document.getElementById('galleryDots');
-      const slides = track.children;
-      const total = slides.length;
-      let current = 0;
-      let startX = 0, moveX = 0, isDragging = false;
+      const total = 3; // original slide count
+      let pos = 1;     // starts at 1 because of prepended clone
+      let startX = 0, moveX = 0, isDragging = false, isTransitioning = false;
+
+      // Clone first and last slides for infinite loop
+      const origSlides = Array.from(track.children);
+      const firstClone = origSlides[0].cloneNode(true);
+      const lastClone = origSlides[origSlides.length - 1].cloneNode(true);
+      firstClone.setAttribute('aria-hidden', 'true');
+      lastClone.setAttribute('aria-hidden', 'true');
+      track.appendChild(firstClone);
+      track.insertBefore(lastClone, track.firstChild);
+      // Now track has: [clone-last] [orig-1] [orig-2] [orig-3] [clone-first]
+      // Indices:          0           1        2        3          4
+
+      // Set initial position (no animation)
+      track.classList.add('no-transition');
+      track.style.transform = 'translateX(-100%)';
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          track.classList.remove('no-transition');
+        });
+      });
 
       // Create dots
       for (let i = 0; i < total; i++) {
         const dot = document.createElement('button');
         dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
         dot.setAttribute('aria-label', 'Фото ' + (i + 1));
-        dot.addEventListener('click', () => goTo(i));
+        dot.addEventListener('click', () => slideTo(i + 1));
         dots.appendChild(dot);
       }
 
-      function goTo(index) {
-        current = Math.max(0, Math.min(index, total - 1));
-        track.style.transform = 'translateX(' + (-current * 100) + '%)';
+      function updateDots() {
+        let real = pos - 1; // convert track pos to 0-based real index
+        if (real < 0) real = total - 1;
+        if (real >= total) real = 0;
         dots.querySelectorAll('.carousel-dot').forEach((d, i) =>
-          d.classList.toggle('active', i === current)
+          d.classList.toggle('active', i === real)
         );
       }
 
+      function slideTo(index) {
+        if (isTransitioning) return;
+        isTransitioning = true;
+        pos = index;
+        track.style.transform = 'translateX(' + (-pos * 100) + '%)';
+        updateDots();
+      }
+
+      // After transition: silently jump if on a clone
+      track.addEventListener('transitionend', () => {
+        isTransitioning = false;
+        if (pos === 0) {
+          // On clone-last → jump to real last
+          track.classList.add('no-transition');
+          pos = total;
+          track.style.transform = 'translateX(' + (-pos * 100) + '%)';
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              track.classList.remove('no-transition');
+            });
+          });
+        } else if (pos === total + 1) {
+          // On clone-first → jump to real first
+          track.classList.add('no-transition');
+          pos = 1;
+          track.style.transform = 'translateX(' + (-pos * 100) + '%)';
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              track.classList.remove('no-transition');
+            });
+          });
+        }
+      });
+
       // Arrows
-      document.getElementById('prevBtn').addEventListener('click', () => goTo(current - 1));
-      document.getElementById('nextBtn').addEventListener('click', () => goTo(current + 1));
+      document.getElementById('prevBtn').addEventListener('click', () => slideTo(pos - 1));
+      document.getElementById('nextBtn').addEventListener('click', () => slideTo(pos + 1));
 
       // Touch swipe
       track.addEventListener('touchstart', (e) => {
+        if (isTransitioning) return;
         startX = e.touches[0].clientX;
+        moveX = 0;
         isDragging = true;
         track.classList.add('dragging');
       }, { passive: true });
@@ -188,7 +245,7 @@
       track.addEventListener('touchmove', (e) => {
         if (!isDragging) return;
         moveX = e.touches[0].clientX - startX;
-        const offset = -current * 100 + (moveX / track.offsetWidth) * 100;
+        const offset = -pos * 100 + (moveX / track.offsetWidth) * 100;
         track.style.transform = 'translateX(' + offset + '%)';
       }, { passive: true });
 
@@ -197,15 +254,17 @@
         isDragging = false;
         track.classList.remove('dragging');
         const threshold = track.offsetWidth * 0.2;
-        if (moveX < -threshold) goTo(current + 1);
-        else if (moveX > threshold) goTo(current - 1);
-        else goTo(current);
+        if (moveX < -threshold) slideTo(pos + 1);
+        else if (moveX > threshold) slideTo(pos - 1);
+        else slideTo(pos);
         moveX = 0;
       });
 
       // Mouse drag (desktop)
       track.addEventListener('mousedown', (e) => {
+        if (isTransitioning) return;
         startX = e.clientX;
+        moveX = 0;
         isDragging = true;
         track.classList.add('dragging');
         e.preventDefault();
@@ -213,7 +272,7 @@
       document.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
         moveX = e.clientX - startX;
-        const offset = -current * 100 + (moveX / track.offsetWidth) * 100;
+        const offset = -pos * 100 + (moveX / track.offsetWidth) * 100;
         track.style.transform = 'translateX(' + offset + '%)';
       });
       document.addEventListener('mouseup', () => {
@@ -221,9 +280,9 @@
         isDragging = false;
         track.classList.remove('dragging');
         const threshold = track.offsetWidth * 0.2;
-        if (moveX < -threshold) goTo(current + 1);
-        else if (moveX > threshold) goTo(current - 1);
-        else goTo(current);
+        if (moveX < -threshold) slideTo(pos + 1);
+        else if (moveX > threshold) slideTo(pos - 1);
+        else slideTo(pos);
         moveX = 0;
       });
 
